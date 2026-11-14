@@ -15,16 +15,17 @@ jobs:
 
       - name: Collect files
         run: |
+          set +e
           mkdir -p out
           cd Play-
           git log -1 --format='commit %H %cd' > ../out/_commit.txt
           {
             echo "== Source/ui_android"; find Source/ui_android -type f | sort
             echo; echo "== Source/ui_shared"; find Source/ui_shared -type f | sort
-            echo; echo "== arcadedefs akai*"; ls arcadedefs | grep -i akai
+            echo; echo "== arcadedefs akai*"; ls arcadedefs | grep -i akai || true
             echo; echo "== build_android"; find build_android -maxdepth 2 -type f ! -name '*.jar' | sort
           } > ../out/_listing.txt
-          copy() { for f in "$@"; do [ -f "$f" ] && cp --parents "$f" ../out/; done; }
+          copy() { for f in "$@"; do if [ -f "$f" ]; then cp --parents "$f" ../out/; else echo "skip (missing): $f"; fi; done; return 0; }
           copy Source/ui_shared/ArcadeUtils.h Source/ui_shared/ArcadeUtils.cpp
           copy Source/ui_shared/BootablesProcesses.h Source/ui_shared/BootablesProcesses.cpp
           copy Source/ui_shared/BootableUtils.h Source/ui_shared/BootableUtils.cpp
@@ -35,7 +36,7 @@ jobs:
           copy arcadedefs/akaievo.arcadedef arcadedefs/akaiser.arcadedef arcadedefs/akaievo8.arcadedef
           copy build_android/build.gradle
           copy Source/ui_qt/mainwindow.cpp
-          grep -rn --include=*.cpp --include=*.h -il "arcade" Source | sort > ../out/_files_mentioning_arcade.txt
+          grep -rl --include=*.cpp --include=*.h -i "arcade" Source | sort > ../out/_files_mentioning_arcade.txt || true
           cd ../out && find . -type f | wc -l && du -sh .
 
       - name: Upload
@@ -43,4 +44,3 @@ jobs:
         with:
           name: play-src
           path: out
-          
