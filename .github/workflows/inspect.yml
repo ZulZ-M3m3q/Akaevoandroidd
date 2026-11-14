@@ -1,0 +1,46 @@
+name: Inspect Play source
+
+# Quick helper (about 1 minute, no compiling). Bundles the Play! source files that
+# AkaiserEvodroid needs to be changed against, so they can be read and patched precisely.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  grab:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download Play! source
+        run: git clone --depth 1 https://github.com/jpd002/Play-.git Play-
+
+      - name: Collect files
+        run: |
+          mkdir -p out
+          cd Play-
+          git log -1 --format='commit %H %cd' > ../out/_commit.txt
+          {
+            echo "== Source/ui_android"; find Source/ui_android -type f | sort
+            echo; echo "== Source/ui_shared"; find Source/ui_shared -type f | sort
+            echo; echo "== arcadedefs akai*"; ls arcadedefs | grep -i akai
+            echo; echo "== build_android"; find build_android -maxdepth 2 -type f ! -name '*.jar' | sort
+          } > ../out/_listing.txt
+          copy() { for f in "$@"; do [ -f "$f" ] && cp --parents "$f" ../out/; done; }
+          copy Source/ui_shared/ArcadeUtils.h Source/ui_shared/ArcadeUtils.cpp
+          copy Source/ui_shared/BootablesProcesses.h Source/ui_shared/BootablesProcesses.cpp
+          copy Source/ui_shared/BootableUtils.h Source/ui_shared/BootableUtils.cpp
+          copy Source/ui_shared/AppConfig.h Source/ui_shared/AppConfig.cpp
+          copy Source/ui_android/CMakeLists.txt Source/ui_android/BootablesInterop.cpp
+          find Source/ui_android -maxdepth 1 -type f \( -name '*.cpp' -o -name '*.h' \) -exec cp --parents {} ../out/ \;
+          find Source/ui_android/java -type f -name '*.java' -exec cp --parents {} ../out/ \;
+          copy arcadedefs/akaievo.arcadedef arcadedefs/akaiser.arcadedef arcadedefs/akaievo8.arcadedef
+          copy build_android/build.gradle
+          copy Source/ui_qt/mainwindow.cpp
+          grep -rn --include=*.cpp --include=*.h -il "arcade" Source | sort > ../out/_files_mentioning_arcade.txt
+          cd ../out && find . -type f | wc -l && du -sh .
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-src
+          path: out
+          
