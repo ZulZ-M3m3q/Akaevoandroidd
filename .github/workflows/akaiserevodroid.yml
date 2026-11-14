@@ -44,7 +44,9 @@ jobs:
           [ -n "$PKGS" ] && "$SDKM" $PKGS || true
 
       - name: Apply AkaiserEvodroid patches
-        run: python3 akevo/patches/apply_patches.py Play- | tee patch.log
+        run: |
+          set -o pipefail
+          python3 akevo/patches/apply_patches.py Play- 2>&1 | tee patch.log
 
       - name: Show patched gradle files
         run: grep -rn --include=build.gradle* -e mlkit -e applicationId Play- | grep -v /Dependencies/ | head -20 || true
@@ -59,6 +61,13 @@ jobs:
           set -o pipefail
           cat > "$GITHUB_WORKSPACE/akevo-init.gradle" <<'INIT'
           allprojects {
+            configurations.all {
+              resolutionStrategy.eachDependency { d ->
+                if (d.requested.group == 'org.jetbrains.kotlin' && d.requested.name.startsWith('kotlin-stdlib')) {
+                  d.useVersion('1.8.22')
+                }
+              }
+            }
             afterEvaluate { p ->
               if (p.plugins.hasPlugin('com.android.application')) {
                 ['androidx.camera:camera-core:1.3.4', 'androidx.camera:camera-camera2:1.3.4',
@@ -106,4 +115,3 @@ jobs:
           path: |
             patch.log
             build.log
-            
