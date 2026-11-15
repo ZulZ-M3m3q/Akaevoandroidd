@@ -1,0 +1,47 @@
+name: Inspect Play source 2
+
+# Quick helper (about 1 minute, no compiling). Bundles the Play! source files that
+# AkaiserEvodroid needs to be changed against, so they can be read and patched precisely.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  grab:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download Play! source
+        run: git clone --depth 1 https://github.com/jpd002/Play-.git Play-
+
+      - name: Collect files
+        run: |
+          set +e
+          mkdir -p out
+          cd Play-
+          git log -1 --format='commit %H %cd' > ../out/_commit.txt
+          {
+            echo "== Source/ui_android"; find Source/ui_android -type f | sort
+            echo; echo "== Source/ui_shared"; find Source/ui_shared -type f | sort
+            echo; echo "== arcadedefs akai*"; ls arcadedefs | grep -i akai || true
+            echo; echo "== build_android"; find build_android -maxdepth 2 -type f ! -name '*.jar' | sort
+          } > ../out/_listing.txt
+          copy() { for f in "$@"; do if [ -f "$f" ]; then cp --parents "$f" ../out/; else echo "skip (missing): $f"; fi; done; return 0; }
+          cp -r --parents Source/ui_shared/arcadedrivers ../out/
+          cp -r --parents Source/iop/namco_sys147 ../out/
+          copy Source/ui_shared/ArcadeDefinition.h Source/ui_shared/CMakeLists.txt
+          copy Source/PS2VM_Preferences.h Source/PS2VM_Preferences.cpp Source/AppConfig.h Source/AppConfig.cpp Source/PS2VM.h
+          copy Source/CMakeLists.txt Source/ui_shared/BootablesDbClient.h
+          copy arcadedefs/akaievo.arcadedef
+          grep -rl -i -E "ioserver|arcade\.ioserver" Source > ../out/_files_ioserver.txt || true
+          for f in $(cat ../out/_files_ioserver.txt); do cp --parents "$f" ../out/; done
+          git submodule update --init --depth 1 deps/Framework > ../out/_submodule.txt 2>&1 || true
+          find deps/Framework -iname 'PathUtils*' -o -iname 'StdStreamUtils*' -o -iname 'filesystem_def.h' | sort > ../out/_framework_files.txt || true
+          for f in $(cat ../out/_framework_files.txt); do cp --parents "$f" ../out/; done
+          ls -R Source/iop | head -200 > ../out/_iop_listing.txt
+          cd ../out && find . -type f | wc -l && du -sh .
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-src2
+          path: out
