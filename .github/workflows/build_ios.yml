@@ -1,0 +1,71 @@
+name: Build iOS (step 1 - plain Play! build test)
+
+# Step 1 of the iOS port: only proves that the Mac build works.
+# It builds Play! exactly like Play!'s own build instructions do, and makes an UNSIGNED .ipa.
+# Uses a macOS machine (GitHub counts macOS minutes at a higher rate than Linux).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - name: Download Play! (with all its parts)
+        run: git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/jpd002/Play-.git Play-
+
+      - name: Show tools
+        run: |
+          xcodebuild -version
+          cmake --version
+          xcode-select -p
+
+      - name: Generate the Xcode project
+        run: |
+          cd Play-
+          mkdir build
+          cd build
+          cmake .. -G Xcode -DCMAKE_TOOLCHAIN_FILE=../deps/Dependencies/cmake-ios/ios.cmake -DTARGET_IOS=ON 2>&1 | tee "$GITHUB_WORKSPACE/cmake.log"
+
+      - name: Build (this takes a while)
+        run: |
+          cd Play-/build
+          cmake --build . --config Release 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Make the unsigned .ipa
+        run: |
+          APP=$(find Play-/build -type d -name Play.app -path '*Release-iphoneos*' | head -1)
+          echo "App folder: $APP"
+          test -n "$APP" || { echo "ERROR: Play.app was not produced"; exit 1; }
+          codesign -s - --force --deep "$APP" || true
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry Play-unsigned.ipa Payload
+          ls -la Play-unsigned.ipa
+
+      - name: Error summary (only runs if something failed)
+        if: failure()
+        run: |
+          {
+            echo "## Build error summary"
+            echo '```'
+            grep -n -E "error:|fatal error|CMake Error|FAILED|No such file|ld: |Undefined symbols" "$GITHUB_WORKSPACE/build.log" "$GITHUB_WORKSPACE/cmake.log" 2>/dev/null | head -60
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the .ipa
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: Play-iOS-unsigned-ipa
+          path: Play-unsigned.ipa
+
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-logs
+          path: |
+            cmake.log
+            build.log
