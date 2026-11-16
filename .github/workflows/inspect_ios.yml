@@ -1,0 +1,46 @@
+name: Inspect Play iOS source
+
+# Quick helper (about 2 minutes, runs on a normal Linux machine, so it is cheap).
+# Bundles Play!'s iOS app source + its own build instructions so the iOS port can be written against the real files.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  grab:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download Play! source
+        run: git clone --depth 1 https://github.com/jpd002/Play-.git Play-
+
+      - name: Collect files
+        run: |
+          set +e
+          mkdir -p out
+          cd Play-
+          git log -1 --format='commit %H %cd' > ../out/_commit.txt
+          {
+            echo "== workflows";            ls -la .github .github/workflows 2>&1
+            echo; echo "== root";            ls -la
+            echo; echo "== Source/ui_ios";   find Source/ui_ios -type f | sort
+            echo; echo "== deps";            ls -la deps 2>&1
+          } > ../out/_listing.txt
+          # Play!'s own CI files (they contain the proven iOS build commands)
+          [ -d .github ] && cp -r --parents .github ../out/
+          cp --parents CMakeLists.txt ../out/ 2>/dev/null
+          cp --parents appveyor.yml .travis.yml ../out/ 2>/dev/null
+          # iOS app source (skip big images)
+          find Source/ui_ios -type f -size -300k -exec cp --parents {} ../out/ \;
+          cp --parents Source/ui_shared/BootablesProcesses.cpp Source/ui_shared/ArcadeUtils.cpp ../out/ 2>/dev/null
+          # the iOS CMake toolchain lives in a submodule
+          git submodule update --init --depth 1 deps/Dependencies > ../out/_submodule.txt 2>&1
+          find deps/Dependencies -maxdepth 2 -iname '*ios*' > ../out/_ios_files.txt 2>&1
+          [ -d deps/Dependencies/cmake-ios ] && find deps/Dependencies/cmake-ios -type f -size -300k -exec cp --parents {} ../out/ \;
+          ls deps/Dependencies > ../out/_dependencies_top.txt 2>&1
+          cd ../out && find . -type f | wc -l && du -sh .
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-ios-src
+          path: out
