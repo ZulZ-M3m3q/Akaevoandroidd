@@ -1,0 +1,33 @@
+# Put this file in your GitHub repo at .github/workflows/dump-play-source.yml
+# Then: Actions tab > "Dump Play source" > Run workflow. Download the artifact "play-source-subset" and send it to Claude.
+name: Dump Play source
+on: workflow_dispatch
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: jpd002/Play-
+          submodules: recursive
+          path: play
+      - name: Collect the files that decide audio and frame timing
+        run: |
+          cd play
+          echo "Play! commit: $(git rev-parse HEAD)" | tee ../commit.txt
+          mkdir -p ../subset
+          find . -type f \( \
+              -name 'SH_OpenSL*' -o -name 'SH_Android*' -o -name 'SoundHandler*' -o -name 'SH_Audio*' \
+              -o -name 'PS2VM.*' -o -name 'PS2VM_*' -o -name 'NativeInterop*' -o -name 'StatsManager*' \
+              -o -name 'ArcadeUtils*' -o -name 'Iop_Spu*' -o -name 'Iop_Sys147*' -o -name 'Iop_Namco*' \
+              -o -name 'GSH_*Android*' -o -name 'EmulatorActivity.java' -o -name 'MainActivity.java' \
+              -o -name 'VirtualMachineManager.java' -o -name 'CMakeLists.txt' -o -name 'build.gradle*' \
+              -o -name 'AndroidManifest.xml' \) \
+            -not -path '*/.git/*' -not -path '*/build/*' -not -path '*/node_modules/*' \
+            -print | tee ../files.txt
+          while read -r f; do mkdir -p "../subset/$(dirname "$f")"; cp "$f" "../subset/$f"; done < ../files.txt
+          mv ../commit.txt ../files.txt ../subset/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: play-source-subset
+          path: subset
