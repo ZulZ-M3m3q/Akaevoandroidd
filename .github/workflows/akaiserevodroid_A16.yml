@@ -1,0 +1,114 @@
+name: Build AkaiserEvodroid A.16
+
+# The repo must contain the akevo folder (overlay/, patches/, icon/, launcher_res/); it is found automatically wherever it is.
+# It downloads the open-source Play! emulator, patches it (stops with a clear error if any patch fails),
+# builds an arm64 APK and signs it.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Check out AkaiserEvodroid sources
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Locate AkaiserEvodroid sources
+        run: |
+          # If the zip itself was uploaded to the repo instead of its contents, unpack it.
+          if ! find . -path ./Play- -prune -o -name apply_patches.py -print | grep -q .; then
+            for z in $(find . -maxdepth 3 -iname 'akevo*.zip'); do echo "unpacking $z"; unzip -o -q "$z" -d akevo_unpacked; done
+          fi
+          SCRIPT=$(find . -path ./Play- -prune -o -name apply_patches.py -print | head -1)
+          if [ -z "$SCRIPT" ]; then
+            echo "ERROR: apply_patches.py not found anywhere in the repo. Files in the repo:"; find . -path ./.git -prune -o -type f -print | head -80; exit 1
+          fi
+          echo "found $SCRIPT"
+          echo "AK_SCRIPT=$(realpath "$SCRIPT")" >> "$GITHUB_ENV"
+          ls -R "$(dirname "$(dirname "$SCRIPT")")" | head -60
+
+      - name: Download Play! (open source PS2 emulator)
+        run: git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/jpd002/Play-.git Play-
+
+      - name: Install the Android SDK/NDK pieces Play! itself uses
+        run: |
+          F=Play-/.github/workflows/build-android.yaml
+          get() { grep -E "^[[:space:]]*$1:" "$F" | head -1 | sed -E "s/^[^:]*:[[:space:]]*//; s/[\"' ]//g"; }
+          NDK=$(get ANDROID_NDK_VERSION); CMAKE=$(get ANDROID_CMAKE_VERSION); BT=$(get ANDROID_BUILD_TOOLS_VERSION)
+          echo "Play! wants NDK=$NDK CMAKE=$CMAKE BUILD_TOOLS=$BT"
+          SDKM="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          PKGS=""
+          [ -n "$NDK" ] && PKGS="$PKGS ndk;$NDK"
+          [ -n "$CMAKE" ] && PKGS="$PKGS cmake;$CMAKE"
+          [ -n "$BT" ] && PKGS="$PKGS build-tools;$BT"
+          [ -n "$PKGS" ] && "$SDKM" $PKGS || true
+
+      - name: Apply AkaiserEvodroid patches (stops here if anything is wrong)
+        run: |
+          set -o pipefail
+          python3 "$AK_SCRIPT" Play- 2>&1 | tee patch.log
+
+      - name: Create signing key
+        run: |
+          keytool -genkeypair -keystore "$GITHUB_WORKSPACE/ak.jks" -storepass akevodroid -keypass akevodroid -alias ak -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AkaiserEvodroid"
+          printf 'storeFile=%s\nstorePassword=akevodroid\nkeyAlias=ak\nkeyPassword=akevodroid\n' "$GITHUB_WORKSPACE/ak.jks" > Play-/build_android/keystore.properties
+
+      - name: Build release APK (this takes a while)
+        run: |
+          set -o pipefail
+          cd Play-/build_android
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --console=plain -Dorg.gradle.jvmargs="-Xmx5g -XX:MaxMetaspaceSize=1g" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Align and sign APK
+        run: |
+          APK=$(find Play-/build_android -path '*outputs/apk/release*' -name '*.apk' | head -1)
+          test -n "$APK" || { echo "NO APK FOUND"; find Play-/build_android -name '*.apk'; exit 1; }
+          echo "built: $APK"
+          BT=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -f -p 4 "$APK" aligned.apk
+          "$BT/apksigner" sign --ks ak.jks --ks-pass pass:akevodroid --out AkaiserEvodroid_A.16.apk aligned.apk
+          "$BT/apksigner" verify AkaiserEvodroid_A.16.apk
+          ls -la AkaiserEvodroid_A.16.apk
+
+      - name: Error summary (only runs if a step failed)
+        if: failure()
+        run: |
+          {
+            echo "## Build error summary"
+            echo "### patch.log (last lines)"
+            echo '```'
+            tail -40 patch.log 2>/dev/null || echo "(no patch.log)"
+            echo '```'
+            echo "### build.log (errors)"
+            echo '```'
+            grep -n -E "What went wrong|error:|FAILED|Execution failed|Could not|No such file|undefined reference|Unresolved|cannot find symbol" -A4 build.log 2>/dev/null | head -80 || echo "(no build.log)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AkaiserEvodroid-A.16
+          path: AkaiserEvodroid_A.16.apk
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: |
+            patch.log
+            build.log
+            Play-/build_android/build.gradle
+            Play-/build_android/src/main/AndroidManifest.xml
